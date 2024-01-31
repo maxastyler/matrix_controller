@@ -1,37 +1,40 @@
 #![no_std]
 #![no_main]
-#![allow(async_fn_in_trait)]
 #![feature(type_alias_impl_trait)]
 
-use core::borrow::Borrow;
-use core::str::from_utf8;
-
+use cyw43::Control;
 use cyw43_pio::PioSpi;
-use defmt::unwrap;
+use defmt as _;
 use defmt_rtt as _;
-use embassy_executor::Spawner;
-use embassy_net::tcp::TcpSocket;
-use embassy_net::udp::{PacketMetadata, UdpSocket};
-use embassy_net::{Config, Stack, StackResources};
-use embassy_rp::bind_interrupts;
-use embassy_rp::gpio::{Level, Output};
-use embassy_rp::pac::RTC;
-use embassy_rp::peripherals::{DMA_CH0, PIN_23, PIN_25, PIO0, USB};
-use embassy_rp::pio::{InterruptHandler as PIOInterruptHandler, Pio};
-use embassy_rp::usb::{Driver, InterruptHandler as USBInterruptHandler};
-use embassy_time::Timer;
-use embedded_io_async::Read;
-use log::{info, warn};
+use embassy_rp::{
+    gpio::{Level, Output},
+    peripherals::{DMA_CH0, PIN_23, PIN_25, PIO0},
+    pio::Pio,
+};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
+use embassy_time::Duration;
+use log::info;
 use panic_probe as _;
-use static_cell::StaticCell;
+use picoserve::{
+    response::{self, DebugValue},
+    routing::{get, parse_path_segment},
+};
+use rand::Rng;
+use static_cell::make_static;
 
-bind_interrupts!(struct Irqs {
-    PIO0_IRQ_0 => PIOInterruptHandler<PIO0>;
-    USBCTRL_IRQ => USBInterruptHandler<USB>;
+use picoserve::extract::State;
+
+// const WIFI_SSID: &str = "Pico W WiFi";
+// const WIFI_PASSWORD: &str = "MyVerySecurePassword";
+
+embassy_rp::bind_interrupts!(struct Irqs {
+    PIO0_IRQ_0 => embassy_rp::pio::InterruptHandler<embassy_rp::peripherals::PIO0>;
+    USBCTRL_IRQ => embassy_rp::usb::InterruptHandler<embassy_rp::peripherals::USB>;
 });
 
 #[embassy_executor::task]
-async fn logger_task(driver: Driver<'static, USB>) {
+async fn logger_task(usb: embassy_rp::peripherals::USB) {
+    let driver = embassy_rp::usb::Driver::new(usb, Irqs);
     embassy_usb_logger::run!(1024, log::LevelFilter::Info, driver);
 }
 
@@ -47,18 +50,96 @@ async fn wifi_task(
 }
 
 #[embassy_executor::task]
-async fn net_task(stack: &'static Stack<cyw43::NetDriver<'static>>) -> ! {
+async fn net_task(stack: &'static embassy_net::Stack<cyw43::NetDriver<'static>>) -> ! {
     stack.run().await
 }
 
+struct EmbassyTimer;
+
+impl picoserve::Timer for EmbassyTimer {
+    type Duration = embassy_time::Duration;
+    type TimeoutError = embassy_time::TimeoutError;
+
+    async fn run_with_timeout<F: core::future::Future>(
+        &mut self,
+        duration: Self::Duration,
+        future: F,
+    ) -> Result<F::Output, Self::TimeoutError> {
+        embassy_time::with_timeout(duration, future).await
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SharedControl(&'static Mutex<CriticalSectionRawMutex, Control<'static>>);
+
+struct AppState {
+    shared_control: SharedControl,
+}
+
+impl picoserve::extract::FromRef<AppState> for SharedControl {
+    fn from_ref(state: &AppState) -> Self {
+        state.shared_control
+    }
+}
+
+type AppRouter = impl picoserve::routing::PathRouter<AppState>;
+
+const WEB_TASK_POOL_SIZE: usize = 8;
+
+#[embassy_executor::task(pool_size = WEB_TASK_POOL_SIZE)]
+async fn web_task(
+    id: usize,
+    stack: &'static embassy_net::Stack<cyw43::NetDriver<'static>>,
+    app: &'static picoserve::Router<AppRouter, AppState>,
+    config: &'static picoserve::Config<Duration>,
+    state: AppState,
+) -> ! {
+    let mut rx_buffer = [0; 1024];
+    let mut tx_buffer = [0; 1024];
+
+    loop {
+        let mut socket = embassy_net::tcp::TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+
+        log::info!("{id}: Listening on TCP:80...");
+        if let Err(e) = socket.accept(80).await {
+            log::warn!("{id}: accept error: {:?}", e);
+            continue;
+        }
+
+        log::info!(
+            "{id}: Received connection from {:?}",
+            socket.remote_endpoint()
+        );
+
+        let (socket_rx, socket_tx) = socket.split();
+
+        match picoserve::serve_with_state(
+            app,
+            EmbassyTimer,
+            config,
+            &mut [0; 2048],
+            socket_rx,
+            socket_tx,
+            &state,
+        )
+        .await
+        {
+            Ok(handled_requests_count) => {
+                log::info!(
+                    "{handled_requests_count} requests handled from {:?}",
+                    socket.remote_endpoint()
+                );
+            }
+            Err(err) => log::error!("{err:?}"),
+        }
+    }
+}
+
 #[embassy_executor::main]
-async fn main(spawner: Spawner) {
+async fn main(spawner: embassy_executor::Spawner) {
     let p = embassy_rp::init(Default::default());
 
-    let driver = Driver::new(p.USB, Irqs);
-    unwrap!(spawner.spawn(logger_task(driver)));
-
-    info!("Hello, world");
+    spawner.must_spawn(logger_task(p.USB));
 
     let fw = include_bytes!("../firmware/43439A0.bin");
     let clm = include_bytes!("../firmware/43439A0_clm.bin");
@@ -66,7 +147,7 @@ async fn main(spawner: Spawner) {
     let pwr = Output::new(p.PIN_23, Level::Low);
     let cs = Output::new(p.PIN_25, Level::High);
     let mut pio = Pio::new(p.PIO0, Irqs);
-    let spi = PioSpi::new(
+    let spi = cyw43_pio::PioSpi::new(
         &mut pio.common,
         pio.sm0,
         pio.irq0,
@@ -76,70 +157,85 @@ async fn main(spawner: Spawner) {
         p.DMA_CH0,
     );
 
-    static STATE: StaticCell<cyw43::State> = StaticCell::new();
-    let state = STATE.init(cyw43::State::new());
+    let state = make_static!(cyw43::State::new());
     let (net_device, mut control, runner) = cyw43::new(state, pwr, spi, fw).await;
-    unwrap!(spawner.spawn(wifi_task(runner)));
+    spawner.must_spawn(wifi_task(runner));
 
     control.init(clm).await;
     control
         .set_power_management(cyw43::PowerManagementMode::PowerSave)
         .await;
 
-    let config = Config::ipv4_static(embassy_net::StaticConfigV4 {
-        address: embassy_net::Ipv4Cidr::new(embassy_net::Ipv4Address::new(169, 254, 1, 1), 16),
-        // dns_servers: heapless::Vec::from_slice(&[embassy_net::Ipv4Address::new(169, 254, 1, 1)])
-        //     .unwrap(),
-	dns_servers: heapless::Vec::new(),
-        gateway: None,
-    });
-
-    // Generate random seed
-    let seed = 0x0123_4567_8212312; // chosen by fair dice roll. guarenteed to be random.
-
-    // Init network stack
-    static STACK: StaticCell<Stack<cyw43::NetDriver<'static>>> = StaticCell::new();
-    static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
-    let stack = &*STACK.init(Stack::new(
+    let stack = &*make_static!(embassy_net::Stack::new(
         net_device,
-        config,
-        RESOURCES.init(StackResources::<3>::new()),
-        seed,
+        embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
+            address: embassy_net::Ipv4Cidr::new(embassy_net::Ipv4Address::new(169, 254, 1, 1), 16),
+            gateway: None,
+            dns_servers: Default::default(),
+        }),
+        make_static!(embassy_net::StackResources::<WEB_TASK_POOL_SIZE>::new()),
+        embassy_rp::clocks::RoscRng.gen(),
     ));
 
-    unwrap!(spawner.spawn(net_task(stack)));
+    spawner.must_spawn(net_task(stack));
 
-    info!("Net task spawned...");
+    info!("Starting access point...");
 
     control.start_ap_open("pico", 5).await;
 
-    info!("AP Open...");
+    info!("Access point open...");
 
-    let mut rx_buffer = [0; 4096];
-    let mut tx_buffer = [0; 4096];
-    let mut buf = [0; 4096];
+    fn make_app() -> picoserve::Router<AppRouter, AppState> {
+        picoserve::Router::new()
+            .route(
+                "/oooh",
+                get(|| async move {
+                    response::File::html(
+                        "<!DOCTYPE html>
+<html>
+<head>
+<title>Page Title</title>
+</head>
+<body>
 
-    loop {
-        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-        if let Err(_) = socket.accept(53).await {
-            warn!("Socket err");
-            continue;
-        }
+<h1>This is a Heading</h1>
+<p>This is a paragraph.</p>
 
-        loop {
-            let n = match socket.read(&mut buf).await {
-                Ok(0) => {
-                    warn!("EOF");
-                    break;
-                }
-                Ok(n) => n,
-                Err(e) => {
-                    warn!("Read error: {:?}", e);
-                    break;
-                }
-            };
+</body>
+</html> 
+",
+                    )
+                }),
+            )
+            .route(
+                ("/set", parse_path_segment()),
+                get(
+                    |led_is_on, State(SharedControl(control)): State<SharedControl>| async move {
+                        control.lock().await.gpio_set(0, led_is_on).await;
+                        DebugValue(led_is_on)
+                    },
+                ),
+            )
+    }
 
-            info!("rxd {}", from_utf8(&buf[..n]).unwrap());
-        }
+    let app = make_static!(make_app());
+
+    let config = make_static!(picoserve::Config::new(picoserve::Timeouts {
+        start_read_request: Some(Duration::from_secs(5)),
+        read_request: Some(Duration::from_secs(1)),
+        write: Some(Duration::from_secs(1)),
+    })
+    .keep_connection_alive());
+
+    let shared_control = SharedControl(make_static!(Mutex::new(control)));
+
+    for id in 0..WEB_TASK_POOL_SIZE {
+        spawner.must_spawn(web_task(
+            id,
+            stack,
+            app,
+            config,
+            AppState { shared_control },
+        ));
     }
 }
