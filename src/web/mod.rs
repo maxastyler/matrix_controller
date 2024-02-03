@@ -27,28 +27,14 @@ impl picoserve::Timer for EmbassyTimer {
     }
 }
 
-#[derive(Clone, Copy)]
-struct SharedControl(&'static Mutex<CriticalSectionRawMutex, Control<'static>>);
-
-struct AppState {
-    shared_control: SharedControl,
-}
-
-impl picoserve::extract::FromRef<AppState> for SharedControl {
-    fn from_ref(state: &AppState) -> Self {
-        state.shared_control
-    }
-}
-
-type AppRouter = impl picoserve::routing::PathRouter<AppState>;
+type AppRouter = impl picoserve::routing::PathRouter;
 
 #[embassy_executor::task(pool_size = WEB_TASK_POOL_SIZE)]
 async fn web_task(
     id: usize,
     stack: &'static embassy_net::Stack<cyw43::NetDriver<'static>>,
-    app: &'static picoserve::Router<AppRouter, AppState>,
+    app: &'static picoserve::Router<AppRouter>,
     config: &'static picoserve::Config<Duration>,
-    state: AppState,
 ) -> ! {
     let mut rx_buffer = [0; 1024];
     let mut tx_buffer = [0; 1024];
@@ -68,15 +54,13 @@ async fn web_task(
         );
 
         let (socket_rx, socket_tx) = socket.split();
-
-        match picoserve::serve_with_state(
+        match picoserve::serve(
             app,
             EmbassyTimer,
             config,
             &mut [0; 2048],
             socket_rx,
             socket_tx,
-            &state,
         )
         .await
         {
@@ -91,13 +75,12 @@ async fn web_task(
     }
 }
 
-fn make_app() -> picoserve::Router<AppRouter, AppState> {
-    picoserve::Router::new()
-        .route(
-            "/",
-            get(|| async move {
-                response::File::html(
-                    "<!DOCTYPE html>
+fn make_app() -> picoserve::Router<AppRouter> {
+    picoserve::Router::new().route(
+        "/",
+        get(|| async move {
+            response::File::html(
+                "<!DOCTYPE html>
 <html>
 <head>
 <title>Page Title</title>
@@ -110,25 +93,12 @@ fn make_app() -> picoserve::Router<AppRouter, AppState> {
 </body>
 </html> 
 ",
-                )
-            }),
-        )
-        .route(
-            ("/set", parse_path_segment()),
-            get(
-                |led_is_on, State(SharedControl(control)): State<SharedControl>| async move {
-                    control.lock().await.gpio_set(0, led_is_on).await;
-                    DebugValue(led_is_on)
-                },
-            ),
-        )
+            )
+        }),
+    )
 }
 
-pub async fn start_server(
-    spawner: &Spawner,
-    control: Control<'static>,
-    stack: &'static Stack<NetDriver<'static>>,
-) {
+pub async fn start_server(spawner: &Spawner, stack: &'static Stack<NetDriver<'static>>) {
     let app = make_static!(make_app());
 
     let config = make_static!(picoserve::Config::new(picoserve::Timeouts {
@@ -138,15 +108,7 @@ pub async fn start_server(
     })
     .keep_connection_alive());
 
-    let shared_control = SharedControl(make_static!(Mutex::new(control)));
-
     for id in 0..WEB_TASK_POOL_SIZE {
-        spawner.must_spawn(web_task(
-            id,
-            stack,
-            app,
-            config,
-            AppState { shared_control },
-        ));
+        spawner.must_spawn(web_task(id, stack, app, config));
     }
 }

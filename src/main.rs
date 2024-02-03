@@ -7,25 +7,16 @@ mod network;
 mod web;
 
 use crate::display::matrix_displayer::matrix_task;
-use crate::display::ws2812::{Ws2812, RGB8};
 use crate::web::start_server;
 use crate::web::WEB_TASK_POOL_SIZE;
 
-use cyw43::Control;
-use cyw43_pio::PioSpi;
 use defmt as _;
 use defmt_rtt as _;
 use display::matrix_displayer::Displays;
 use display::metaballs::Metaballs;
-use embassy_rp::{
-    gpio::{Level, Output},
-    peripherals::{DMA_CH0, DMA_CH1, PIN_16, PIN_23, PIN_25, PIO0, PIO1},
-    pio::{Instance, Pio},
-};
+use embassy_rp::pio::Pio;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
-use embassy_time::{Duration, Timer};
-use log::info;
 use panic_probe as _;
 
 use crate::network::set_up_network_stack;
@@ -51,13 +42,18 @@ async fn main(spawner: embassy_executor::Spawner) {
 
     spawner.must_spawn(logger_task(p.USB));
 
-    let (control, stack) = set_up_network_stack(
+    let (_, stack) = set_up_network_stack(
         &spawner, p.PIN_23, p.PIN_25, p.PIO0, p.PIN_24, p.PIN_29, p.DMA_CH0,
     )
     .await;
 
-    start_server(&spawner, control, stack).await;
+    start_server(&spawner, stack).await;
 
     let pio_led = Pio::new(p.PIO1, Irqs);
-    spawner.must_spawn(matrix_task(pio_led, p.DMA_CH1, p.PIN_16));
+    spawner.must_spawn(matrix_task(
+        pio_led,
+        p.DMA_CH1,
+        p.PIN_16,
+        &MATRIX_DISPLAY_SIGNAL,
+    ));
 }
