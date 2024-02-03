@@ -1,11 +1,14 @@
+use core::fmt::Write;
+use core::str::from_utf8_unchecked;
+
 use cyw43::{Control, NetDriver};
+use defmt::Format;
 use embassy_executor::Spawner;
 use embassy_net::Stack;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 use embassy_time::Duration;
+use heapless::String;
 use picoserve::{
-    extract::State,
-    response::{self, DebugValue, IntoResponse},
+    response::{self},
     routing::{get, parse_path_segment},
 };
 use static_cell::make_static;
@@ -78,27 +81,11 @@ async fn web_task(
     }
 }
 
-fn make_app() -> picoserve::Router<AppRouter> {
+fn make_app(main_page: &'static str) -> picoserve::Router<AppRouter> {
     picoserve::Router::new()
         .route(
             "/",
-            get(|| async move {
-                response::File::html(
-                    "<!DOCTYPE html>
-<html>
-<head>
-<title>Beautiful PICTURE MATRIX :D</title>
-</head>
-<body>
-
-<h1>This is a Heading</h1>
-<p>This is a paragraph.</p>
-
-</body>
-</html> 
-",
-                )
-            }),
+            get(move || async move { response::File::html(main_page) }),
         )
         .route(
             ("/run", parse_path_segment()),
@@ -113,7 +100,27 @@ fn make_app() -> picoserve::Router<AppRouter> {
 }
 
 pub async fn start_server(spawner: &Spawner, stack: &'static Stack<NetDriver<'static>>) {
-    let app = make_static!(make_app());
+    let mut s: &'static mut String<4000> = make_static!(String::new());
+    write!(
+        s,
+        "<!DOCTYPE html>
+<html>
+<body>
+<h1>MATRIX CONTROL ROOM</h1>
+<ul>"
+    )
+    .unwrap();
+    for (i, n) in [(0, "Wheel"), (1, "Metaballs")] {
+        write!(s, "<li><a href=\"run/{}\">{}</a></li>", i, n).unwrap();
+    }
+    write!(
+        s,
+        "</ul>
+</body>
+</html> "
+    )
+    .unwrap();
+    let app = make_static!(make_app(s));
 
     let config = make_static!(picoserve::Config::new(picoserve::Timeouts {
         start_read_request: Some(Duration::from_secs(5)),
