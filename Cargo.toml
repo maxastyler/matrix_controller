@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+bytemuck = "1.14.1"
 cortex-m-rt = {version="0.7.3"}
 cyw43 = { version = "0.1.0", features = ["defmt", "firmware-logs"] }
 cyw43-pio = { version = "0.1.0", features = ["defmt", "overclock"] }
@@ -22,6 +23,8 @@ embassy-time = { version = "0.3.0", features = ["defmt", "defmt-timestamp-uptime
 embassy-usb = { version = "0.1.0", features = ["defmt"] }
 embassy-usb-logger = "0.1.0"
 embedded-io-async = { version = "0.6.1", features = ["defmt-03"] }
+fixed = "1.24.0"
+fixed-macro = "1.2.0"
 heapless = "0.8.0"
 log = "0.4.20"
 panic-probe = { version = "0.3.1", features = ["print-defmt"] }
