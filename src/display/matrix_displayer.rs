@@ -53,6 +53,6 @@ pub async fn matrix_task(
             }
         }
         ws2812.write().await;
-        select(Timer::after_millis(10), signal.wait()).await
+        select(Timer::after_millis(10), signal.wait()).await;
     }
 }
