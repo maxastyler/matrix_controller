@@ -1,15 +1,12 @@
-use core::{borrow::Borrow, ptr::slice_from_raw_parts, slice};
-
 use embassy_futures::select::select;
 use embassy_rp::{
-    dma::Channel,
     peripherals::{DMA_CH1, PIN_16, PIO1},
     pio::Pio,
-    PeripheralRef,
 };
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::Timer;
+use log::info;
 
 use super::{metaballs::Metaballs, wheel::Wheel, ws2812::Ws2812};
 
@@ -20,11 +17,32 @@ pub trait MatrixDisplayer<const ROWS: usize, const COLS: usize> {
     }
 }
 
+#[derive(Debug)]
 pub enum Displays {
     Wheel(Wheel),
     // Wrap(Wrap),
     // Single(Single),
     Metaballs(Metaballs),
+}
+
+impl TryFrom<usize> for Displays {
+    type Error = ();
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        Ok(match value {
+            0 => Self::Wheel(Wheel(0)),
+            1 => Self::Metaballs(Metaballs::new()),
+            _ => return Err(()),
+        })
+    }
+}
+
+async fn change_on_signal(
+    state: &mut Displays,
+    signal: &'static Signal<CriticalSectionRawMutex, Displays>,
+) {
+    *state = signal.wait().await;
+    info!("{:?}", state);
 }
 
 #[embassy_executor::task]
@@ -36,7 +54,7 @@ pub async fn matrix_task(
 ) {
     let mut ws2812: Ws2812<'_, embassy_rp::peripherals::PIO1, 0, 16, 16> =
         Ws2812::new(&mut pio.common, pio.sm0, dma, pin);
-    let mut state = signal.wait().await;
+    let mut state = Displays::try_from(0).unwrap();
     loop {
         match state {
             Displays::Wheel(ref mut w) => {
@@ -53,6 +71,10 @@ pub async fn matrix_task(
             }
         }
         ws2812.write().await;
-        select(Timer::after_millis(10), signal.wait()).await;
+        select(
+            Timer::after_millis(10),
+            change_on_signal(&mut state, signal),
+        )
+        .await;
     }
 }

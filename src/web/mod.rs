@@ -5,10 +5,13 @@ use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 use embassy_time::Duration;
 use picoserve::{
     extract::State,
-    response::{self, DebugValue},
+    response::{self, DebugValue, IntoResponse},
     routing::{get, parse_path_segment},
 };
 use static_cell::make_static;
+
+use crate::display::matrix_displayer::Displays;
+use crate::MATRIX_DISPLAY_SIGNAL;
 
 pub const WEB_TASK_POOL_SIZE: usize = 3;
 
@@ -76,14 +79,15 @@ async fn web_task(
 }
 
 fn make_app() -> picoserve::Router<AppRouter> {
-    picoserve::Router::new().route(
-        "/",
-        get(|| async move {
-            response::File::html(
-                "<!DOCTYPE html>
+    picoserve::Router::new()
+        .route(
+            "/",
+            get(|| async move {
+                response::File::html(
+                    "<!DOCTYPE html>
 <html>
 <head>
-<title>Page Title</title>
+<title>Beautiful PICTURE MATRIX :D</title>
 </head>
 <body>
 
@@ -93,9 +97,19 @@ fn make_app() -> picoserve::Router<AppRouter> {
 </body>
 </html> 
 ",
-            )
-        }),
-    )
+                )
+            }),
+        )
+        .route(
+            ("/run", parse_path_segment()),
+            get(|p: usize| async move {
+                match Displays::try_from(p) {
+                    Ok(d) => MATRIX_DISPLAY_SIGNAL.signal(d),
+                    Err(_) => (),
+                }
+                response::Redirect::to("/")
+            }),
+        )
 }
 
 pub async fn start_server(spawner: &Spawner, stack: &'static Stack<NetDriver<'static>>) {

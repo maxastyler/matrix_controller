@@ -14,6 +14,7 @@ const BALLS: [(f32, f32, f32, f32); 5] = [
     (2.0, 1.0, 0.1, 0.0),
 ];
 
+#[derive(Debug)]
 pub struct Metaballs(f32);
 
 impl Metaballs {

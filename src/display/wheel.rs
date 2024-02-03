@@ -2,6 +2,7 @@ use embassy_rp::peripherals::PIO1;
 
 use super::{matrix_displayer::MatrixDisplayer, ws2812::{Ws2812, RGB8}};
 
+#[derive(Debug)]
 pub struct Wheel(pub usize);
 
 impl<const COLS: usize, const ROWS: usize> MatrixDisplayer<ROWS, COLS> for Wheel {
