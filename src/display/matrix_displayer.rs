@@ -8,7 +8,7 @@ use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal}
 use embassy_time::Timer;
 use log::info;
 
-use super::{metaballs::Metaballs, wheel::Wheel, ws2812::Ws2812};
+use super::{cake::Cake, metaballs::Metaballs, wheel::Wheel, ws2812::Ws2812};
 
 pub trait MatrixDisplayer<const ROWS: usize, const COLS: usize> {
     fn update(&mut self, ws2812: &mut Ws2812<'_, PIO1, 0, ROWS, COLS>);
@@ -17,12 +17,12 @@ pub trait MatrixDisplayer<const ROWS: usize, const COLS: usize> {
     }
 }
 
-#[derive(Debug)]
 pub enum Displays {
     Wheel(Wheel),
     // Wrap(Wrap),
     // Single(Single),
     Metaballs(Metaballs),
+    Cake(Cake<10>),
 }
 
 impl TryFrom<usize> for Displays {
@@ -42,7 +42,6 @@ async fn change_on_signal(
     signal: &'static Signal<CriticalSectionRawMutex, Displays>,
 ) {
     *state = signal.wait().await;
-    info!("{:?}", state);
 }
 
 #[embassy_executor::task]
@@ -67,6 +66,9 @@ pub async fn matrix_task(
             //     w.update(&mut ws2812);
             // }
             Displays::Metaballs(ref mut w) => {
+                w.update(&mut ws2812);
+            }
+            Displays::Cake(ref mut w) => {
                 w.update(&mut ws2812);
             }
         }

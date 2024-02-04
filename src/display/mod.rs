@@ -5,3 +5,5 @@ pub mod metaballs;
 pub mod wheel;
 // pub mod wrap;
 pub mod ws2812;
+mod cake;
+mod rgb8;

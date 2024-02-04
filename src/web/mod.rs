@@ -110,7 +110,7 @@ pub async fn start_server(spawner: &Spawner, stack: &'static Stack<NetDriver<'st
 <ul>"
     )
     .unwrap();
-    for (i, n) in [(0, "Wheel"), (1, "Metaballs")] {
+    for (i, n) in [(0, "Wheel"), (1, "Metaballs"), (2, "Cake")] {
         write!(s, "<li><a href=\"run/{}\">{}</a></li>", i, n).unwrap();
     }
     write!(

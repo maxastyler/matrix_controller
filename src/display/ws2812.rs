@@ -3,6 +3,7 @@ use core::{
     slice,
 };
 
+use embedded_graphics_core::pixelcolor::{Rgb888, RgbColor};
 use fixed::types::U24F8;
 use fixed_macro::fixed;
 
@@ -13,42 +14,8 @@ use embassy_rp::{
     pio::{Common, Config, FifoJoin, Instance, PioPin, ShiftConfig, StateMachine},
     Peripheral, PeripheralRef,
 };
-use picoserve::response::ws;
 
-#[derive(Default, Debug, Copy, Clone)]
-#[repr(C, align(4))]
-pub struct RGB8 {
-    pub padding: u8,
-    pub b: u8,
-    pub r: u8,
-    pub g: u8,
-}
-
-impl RGB8 {
-    pub fn new(r: u8, g: u8, b: u8) -> Self {
-        Self {
-            padding: 0,
-            g,
-            r,
-            b,
-        }
-    }
-
-    pub fn half(self) -> Self {
-        Self {
-            r: self.r / 10,
-            g: self.g / 10,
-            b: self.b / 10,
-            padding: 0,
-        }
-    }
-}
-
-impl From<(u8, u8, u8)> for RGB8 {
-    fn from((r, g, b): (u8, u8, u8)) -> Self {
-        RGB8::new(r, g, b)
-    }
-}
+use super::rgb8::RGB8;
 
 pub struct Ws2812<'d, P: Instance, const S: usize, const ROWS: usize, const COLS: usize> {
     dma: PeripheralRef<'d, AnyChannel>,

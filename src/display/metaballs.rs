@@ -4,7 +4,8 @@ use embassy_rp::peripherals::PIO1;
 use embassy_rp::rom_data::float_funcs as ff;
 
 use super::matrix_displayer::MatrixDisplayer;
-use super::ws2812::{Ws2812, RGB8};
+use super::rgb8::RGB8;
+use super::ws2812::Ws2812;
 
 const BALLS: [(f32, f32, f32, f32); 5] = [
     (1.0, 0.0, 2.0, 1.0),

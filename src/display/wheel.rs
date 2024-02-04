@@ -1,6 +1,6 @@
 use embassy_rp::peripherals::PIO1;
 
-use super::{matrix_displayer::MatrixDisplayer, ws2812::{Ws2812, RGB8}};
+use super::{matrix_displayer::MatrixDisplayer, rgb8::RGB8, ws2812::Ws2812};
 
 #[derive(Debug)]
 pub struct Wheel(pub usize);
