@@ -27,7 +27,8 @@ impl<const N: usize> Cake<N> {
 impl<const N: usize, const ROWS: usize, const COLS: usize> MatrixDisplayer<ROWS, COLS> for Cake<N> {
     fn update(&mut self, ws2812: &mut Ws2812<'_, PIO1, 0, ROWS, COLS>) {
         self.1.pixels().for_each(|p| {
-            ws2812[(p.0.x as usize, p.0.y as usize)] = p.1.into();
+	    let pix: RGB8 = p.1.into();
+            ws2812[(p.0.y as usize, p.0.x as usize)] = pix.div();
         });
         // self.0.push()
         if !self.0.is_full() {

@@ -21,8 +21,18 @@ pub enum Displays {
     Wheel(Wheel),
     // Wrap(Wrap),
     // Single(Single),
-    Metaballs(Metaballs),
-    Cake(Cake<10>),
+    Metaballs(Metaballs<10>),
+    Cake(Cake<20>),
+}
+
+impl Displays {
+    pub fn frame_spacing(&self) -> u64 {
+        match self {
+            Displays::Wheel(_) => 10,
+            Displays::Metaballs(_) => 50,
+            Displays::Cake(_) => 50,
+        }
+    }
 }
 
 impl TryFrom<usize> for Displays {
@@ -32,6 +42,7 @@ impl TryFrom<usize> for Displays {
         Ok(match value {
             0 => Self::Wheel(Wheel(0)),
             1 => Self::Metaballs(Metaballs::new()),
+            2 => Self::Cake(Cake::new()),
             _ => return Err(()),
         })
     }
@@ -53,7 +64,7 @@ pub async fn matrix_task(
 ) {
     let mut ws2812: Ws2812<'_, embassy_rp::peripherals::PIO1, 0, 16, 16> =
         Ws2812::new(&mut pio.common, pio.sm0, dma, pin);
-    let mut state = Displays::try_from(0).unwrap();
+    let mut state = Displays::try_from(2).unwrap();
     loop {
         match state {
             Displays::Wheel(ref mut w) => {
@@ -74,7 +85,7 @@ pub async fn matrix_task(
         }
         ws2812.write().await;
         select(
-            Timer::after_millis(10),
+            Timer::after_millis(state.frame_spacing()),
             change_on_signal(&mut state, signal),
         )
         .await;

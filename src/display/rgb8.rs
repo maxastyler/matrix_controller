@@ -37,6 +37,15 @@ impl RGB8 {
         }
     }
 
+    pub fn div(self) -> Self {
+        Self {
+            padding: 0,
+            b: self.b / 10,
+            r: self.r / 10,
+            g: self.g / 10,
+        }
+    }
+
     // fn hsv(self) -> (f32, f32, f32) {
     //     let (r, g, b) = (
     //         ff::fdiv(self.r as f32, 255.0),
